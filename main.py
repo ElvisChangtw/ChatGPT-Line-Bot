@@ -74,6 +74,18 @@ def get_replied_message_text(event):
             logger.error(f"Failed to get replied message: {str(e)}")
     return None
 
+def remove_bot_mention(event, text):
+    """從訊息中移除@bot的文字"""
+    mention = getattr(event.message, 'mention', None)
+    if mention and mention.mentionees:
+        for m in mention.mentionees:
+            if m.user_id == BOT_USER_ID:
+                # 找到@自己的地方，刪除
+                if hasattr(m, 'index') and hasattr(m, 'length'):
+                    # LINE mention 會告訴你 index 和 length
+                    return text[:m.index] + text[m.index + m.length:]
+    return text
+
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -105,8 +117,22 @@ def handle_text_message(event):
 
     if not should_process_message(event, text):
             logger.info(f'Message ignored: {text}')
+            msg = TextSendMessage(
+                text=f"<@{BOT_USER_ID}> 你還沒註冊, 我不回答",
+                mention=Mention(
+                    mentionees=[
+                        Mentionee(
+                            index=0,
+                            length=len(f"<@{BOT_USER_ID}>"),
+                            user_id=BOT_USER_ID
+                        )
+                    ]
+                )
+            )
+            line_bot_api.reply_message(event.reply_token, msg)
             return
-
+    
+    text = remove_bot_mention(event, text).strip()
     try:
         if text.startswith('/註冊'):
             api_key = text[3:].strip()
