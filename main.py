@@ -23,6 +23,8 @@ from src.mongodb import mongodb
 MAX_CACHE_SIZE = 1000
 # 有序字典作為快取
 message_cache = OrderedDict()
+# 快取用於 mapping 引用訊息到原文
+quoted_cache = {}
 
 # 載入環境變數
 load_dotenv('.env')
@@ -41,6 +43,23 @@ BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')
 
 
 def auto_cache_text_messages(body):
+    """自動快取所有文字訊息，並處理 quotedMessageId"""
+    try:
+        data = json.loads(body)
+        events = data.get('events', [])
+        for event in events:
+            if event.get('type') == 'message' and event['message'].get('type') == 'text':
+                msg = event['message']
+                message_id = msg['id']
+                text = msg['text'].strip()
+                # 存文字到快取
+                save_message_to_cache(message_id, text)
+                # 若有 quotedMessageId，快取引用對應
+                quoted_id = msg.get('quotedMessageId')
+                if quoted_id:
+                    quoted_cache[message_id] = quoted_id
+    except Exception as e:
+        logger.error(f"Auto cache text message failed: {e}")(body):
     """自動快取所有文字訊息"""
     try:
         data = json.loads(body)
@@ -77,6 +96,23 @@ def should_process_message(event, text):
 
 
 def get_replied_message_text(event):
+    """如果此訊息是 reply 或 quote，從快取取得原文"""
+    # 先檢查 quoted_cache（處理原始 JSON 中的 quotedMessageId）
+    msg_id = event.message.id
+    if msg_id in quoted_cache:
+        quoted_id = quoted_cache.get(msg_id)
+        logger.info(f"get_replied_message_text via quoted_cache -> quoted_id: {quoted_id}")
+        return message_cache.get(quoted_id)
+
+    # 若無 quotedMessageId，再檢查 reference（舊版）
+    reference = getattr(event.message, 'reference', None)
+    if reference:
+        replied_id = getattr(reference, 'message_id', None) or getattr(reference, 'messageId', None)
+        if replied_id:
+            logger.info(f"get_replied_message_text via reference -> message_id: {replied_id}")
+            return message_cache.get(replied_id)
+    logger.info("get_replied_message_text: no quoted or reference id")
+    return None(event):
     """如果此訊息是 reply 或 quote，從快取取得原文"""
     msg = event.message
     # 新版 quote message 支援 quoted_message_id
