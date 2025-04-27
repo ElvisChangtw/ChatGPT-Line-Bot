@@ -101,7 +101,7 @@ def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     replied_text = get_replied_message_text(event) 
-    logger.info(f'{user_id}: {text} : replied_text:{replied_text}')
+    logger.info(f'{user_id}: {text} : replied_text:{str(event)}')
 
 
     if replied_text:
