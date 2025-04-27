@@ -59,6 +59,7 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
+    
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
@@ -72,6 +73,11 @@ def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     logger.info(f'{user_id}: {text}')
+
+
+    if not should_process_message(event, text):
+            logger.info(f'Message ignored: {text}')
+            return
 
     try:
         if text.startswith('/註冊'):
