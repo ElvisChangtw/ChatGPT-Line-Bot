@@ -1,4 +1,3 @@
-```python
 from dotenv import load_dotenv
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -248,4 +247,3 @@ if __name__ == '__main__':
     except FileNotFoundError:
         pass
     app.run(host='0.0.0.0', port=8080)
-```
