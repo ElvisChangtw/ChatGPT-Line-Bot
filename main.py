@@ -169,6 +169,8 @@ def handle_text_message(event):
                 role,content = get_role_and_content(resp)
                 msg = TextSendMessage(text=content)
             memory.append(uid,role,content)
+    except KeyError:
+        msg = TextSendMessage(text='請先註冊 Token，格式為 /註冊 sk-xxxxx')
     except Exception as e:
         msg = TextSendMessage(text=str(e))
 
