@@ -105,31 +105,20 @@ def callback():
 def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
-    replied_text = get_replied_message_text(event)  # 這裡另外抓
+    replied_text = get_replied_message_text(event) 
     logger.info(f'{user_id}: {text}')
 
 
     if replied_text:
         text = f"針對這段話回應：{replied_text}\n使用者補充說：{text}"
+        logger.info("replied_text:" + text)
     else:
         text = text
 
 
     if not should_process_message(event, text):
             logger.info(f'Message ignored: {text}')
-            msg = TextSendMessage(
-                text=f"<@{BOT_USER_ID}> 你還沒註冊, 我不回答",
-                mention=Mention(
-                    mentionees=[
-                        Mentionee(
-                            index=0,
-                            length=len(f"<@{BOT_USER_ID}>"),
-                            user_id=BOT_USER_ID
-                        )
-                    ]
-                )
-            )
-            line_bot_api.reply_message(event.reply_token, msg)
+            line_bot_api.reply_message(event.reply_token, "尚未註冊")
             return
     
     text = remove_bot_mention(event, text).strip()
