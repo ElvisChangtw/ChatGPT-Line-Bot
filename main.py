@@ -49,6 +49,9 @@ def should_process_message(event, text):
 
         mention = getattr(event.message, 'mention', None)
         if mention and mention.mentionees:
+            for m in mention.mentionees:
+                print("mentionees :"+ m + " is mentioned")
+                print("BOT_USER_ID = "+ BOT_USER_ID)
             return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
     return False  # 其他情況不處理
 
