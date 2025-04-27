@@ -20,6 +20,11 @@ from src.utils import get_role_and_content
 from src.service.youtube import Youtube, YoutubeTranscriptReader
 from src.service.website import Website, WebsiteReader
 from src.mongodb import mongodb
+from collections import OrderedDict
+
+
+MAX_CACHE_SIZE = 1000  # 最多保留1000筆
+message_cache = OrderedDict()
 
 load_dotenv('.env')
 
@@ -35,6 +40,12 @@ memory = Memory(system_message=os.getenv('SYSTEM_MESSAGE'), memory_message_count
 model_management = {}
 api_keys = {}
 BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')
+
+def save_message_to_cache(message_id, text):
+    """存訊息到快取，超過上限自動移除最舊的"""
+    if len(message_cache) >= MAX_CACHE_SIZE:
+        message_cache.popitem(last=False)  # 移除最舊的一筆
+    message_cache[message_id] = text
 
 def should_process_message(event, text):
     """ 判斷是否要處理這條訊息 """
@@ -54,19 +65,11 @@ def should_process_message(event, text):
     return False  # 其他情況不處理
 
 def get_replied_message_text(event):
-    """如果這個訊息是reply別人的，嘗試拿到被reply的訊息文字"""
+    """如果這個訊息是reply別人的，從快取找到被reply的文字"""
     reference = getattr(event.message, 'reference', None)
     if reference and hasattr(reference, 'messageId'):
         replied_message_id = reference.messageId
-        try:
-            content = line_bot_api.get_message_content(replied_message_id)
-            if content:
-                # LINE get_message_content回來是bytes stream，需要自己解析
-                # 注意：這邊拿到的是二進位資料，通常是文字就 decode 成 utf-8
-                message_text = content.content.decode('utf-8')
-                return message_text
-        except Exception as e:
-            logger.error(f"Failed to get replied message: {str(e)}")
+        return message_cache.get(replied_message_id, None)  # 快取查找
     return None
 
 def remove_bot_mention(event, text):
@@ -100,21 +103,22 @@ def callback():
 def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
+    save_message_to_cache(event.message.id, text)
     replied_text = get_replied_message_text(event) 
-    logger.info(f'{user_id}: {text} : replied_text:{str(event)}')
+    logger.info(f'{user_id}: {text}')
 
+    if not should_process_message(event, text):
+        logger.info(f'Message ignored: {text}')
+        msg = TextSendMessage(text="尚未註冊")
+        line_bot_api.reply_message(event.reply_token, msg)
+        return
+    
 
     if replied_text:
         text = f"針對這段話回應：{replied_text}\n使用者補充說：{text}"
         logger.info("replied_text:" + text)
     else:
         text = text
-
-
-    if not should_process_message(event, text):
-            logger.info(f'Message ignored: {text}')
-            line_bot_api.reply_message(event.reply_token, "尚未註冊")
-            return
     
     text = remove_bot_mention(event, text).strip()
     try:
