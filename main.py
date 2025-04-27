@@ -73,15 +73,17 @@ def get_replied_message_text(event):
     return None
 
 def remove_bot_mention(event, text):
-    """從訊息中移除@bot的文字"""
+    """從訊息中只移除@bot自己的文字，保留其他mention"""
     mention = getattr(event.message, 'mention', None)
     if mention and mention.mentionees:
-        for m in mention.mentionees:
+        # 要從後面往前刪，不然index會跑掉
+        sorted_mentions = sorted(mention.mentionees, key=lambda x: x.index, reverse=True)
+        for m in sorted_mentions:
             if m.user_id == BOT_USER_ID:
-                # 找到@自己的地方，刪除
                 if hasattr(m, 'index') and hasattr(m, 'length'):
-                    # LINE mention 會告訴你 index 和 length
-                    return text[:m.index] + text[m.index + m.length:]
+                    # 切掉@自己那一段
+                    text = text[:m.index] + text[m.index + m.length:]
+        text = text.strip()  # 刪完多餘空格
     return text
 
 
@@ -113,14 +115,15 @@ def handle_text_message(event):
         line_bot_api.reply_message(event.reply_token, msg)
         return
     
+    text = remove_bot_mention(event, text).strip()
 
     if replied_text:
-        text = f"針對這段話回應：{replied_text}\n使用者補充說：{text}"
+        text = f"針對這段話回應：{replied_text}\n 使用者補充說：{text}"
         logger.info(f"replied_text:{text}")
     else:
         text = text
     
-    text = remove_bot_mention(event, text).strip()
+    
     try:
         if text.startswith('/註冊'):
             api_key = text[3:].strip()
