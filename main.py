@@ -34,6 +34,23 @@ website = Website()
 memory = Memory(system_message=os.getenv('SYSTEM_MESSAGE'), memory_message_count=2)
 model_management = {}
 api_keys = {}
+BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')  # 記得.env加一行：LINE_BOT_USER_ID=你的bot的userId
+
+def should_process_message(event, text):
+    """ 判斷是否要處理這條訊息 """
+    source_type = event.source.type  # user / group / room
+
+    if source_type == 'user':
+        return True  # 私聊都處理
+
+    if source_type in ['group', 'room']:
+        if text.startswith('/'):
+            return True  # 指令開頭就直接處理
+
+        mention = getattr(event.message, 'mention', None)
+        if mention and mention.mentionees:
+            return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
+    return False  # 其他情況不處理
 
 
 @app.route("/callback", methods=['POST'])
@@ -54,6 +71,9 @@ def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     logger.info(f'{user_id}: {text}')
+
+    if not should_process_message(event, text):
+        return
 
     try:
         if text.startswith('/註冊'):
