@@ -5,8 +5,6 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage, ImageSendMessage, AudioMessage
 )
-from linebot.models.mention import Mention
-from linebot.models.mentionee import Mentionee
 import os
 import uuid
 import json
@@ -54,6 +52,7 @@ def auto_cache_text_messages(body):
                 msg_id = msg['id']
                 txt = msg['text'].strip()
                 save_message_to_cache(msg_id, txt)
+                # 若有 quotedMessageId，記錄引用對應
                 qid = msg.get('quotedMessageId')
                 if qid:
                     quoted_cache[msg_id] = qid
@@ -85,13 +84,17 @@ def should_process_message(event, text):
 def get_replied_message_text(event):
     """如果是回覆/引用其他訊息，從快取取得原文"""
     mid = event.message.id
+    # 先檢查 quoted_cache
     if mid in quoted_cache:
         orig_id = quoted_cache[mid]
+        logger.info(f"Quoted cache lookup: {orig_id}")
         return message_cache.get(orig_id)
+    # 再檢查 reference（舊版）
     ref = getattr(event.message, 'reference', None)
     if ref:
         rid = getattr(ref, 'message_id', None) or getattr(ref, 'messageId', None)
         if rid:
+            logger.info(f"Reference lookup: {rid}")
             return message_cache.get(rid)
     return None
 
@@ -100,6 +103,7 @@ def remove_bot_mention(event, text):
     """移除訊息中的 @Bot 自己 mention，保留其他mention"""
     mention = getattr(event.message, 'mention', None)
     if mention and mention.mentionees:
+        # 反向刪除以避免 index 位移
         for m in sorted(mention.mentionees, key=lambda x: x.index, reverse=True):
             if m.user_id == BOT_USER_ID and hasattr(m, 'index') and hasattr(m, 'length'):
                 text = text[:m.index] + text[m.index + m.length:]
@@ -123,53 +127,30 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     uid = event.source.user_id
-    raw_text = event.message.text.strip()
+    text = event.message.text.strip()
     reply_txt = get_replied_message_text(event)
-    logger.info(f"{uid}: {raw_text}")
+    logger.info(f"{uid}: {text}")
 
-    # 先處理 /註冊 指令，讓未註冊也能使用
-    if raw_text.startswith('/註冊'):
-        api_key = raw_text[3:].strip()
-        model = OpenAIModel(api_key=api_key)
-        ok, _, _ = model.check_token_valid()
-        if not ok:
-            msg = TextSendMessage(text='Token 無效，請重新註冊')
-        else:
-            model_management[uid] = model
-            storage.save({uid: api_key})
-            msg = TextSendMessage(text='Token 有效，註冊成功')
-        line_bot_api.reply_message(event.reply_token, msg)
+    if not should_process_message(event, text):
+        logger.info(f"Ignored: {text}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text='尚未註冊'))
         return
 
-    # 若未註冊，回覆提示
-    if uid not in model_management:
-        src = event.source.type
-        if src == 'user':
-            msg = TextSendMessage(text='尚未註冊，請先輸入 /註冊 sk-xxxxx')
-            line_bot_api.reply_message(event.reply_token, msg)
-        else:
-            mention_text = f"<@{BOT_USER_ID}> 尚未註冊，請先輸入 /註冊 sk-xxxxx"
-            reply = TextSendMessage(
-                text=mention_text,
-                mention=Mention(
-                    mentionees=[Mentionee(
-                        index=0,
-                        length=len(f"<@{BOT_USER_ID}>") ,
-                        user_id=BOT_USER_ID
-                    )]
-                )
-            )
-            line_bot_api.reply_message(event.reply_token, reply)
-        return
-
-    # 處理已註冊使用者的訊息
-    text = remove_bot_mention(event, raw_text)
+    # 移除對bot的mention
+    text = remove_bot_mention(event, text)
     if reply_txt:
         text = f"針對此訊息回應：{reply_txt}\n使用者補充：{text}"
 
     try:
-        if text.startswith('/指令說明'):
-            msg = TextSendMessage(text='指令：...')
+        if text.startswith('/註冊'):
+            key = text[3:].strip()
+            mdl = OpenAIModel(api_key=key)
+            ok, _, _ = mdl.check_token_valid()
+            if not ok:
+                raise ValueError('Invalid API token')
+            model_management[uid] = mdl
+            storage.save({uid: key})
+            msg = TextSendMessage(text='Token 有效，註冊成功')
         elif text.startswith('/系統訊息'):
             memory.change_system_message(uid, text[5:].strip())
             msg = TextSendMessage(text='輸入成功')
@@ -186,13 +167,14 @@ def handle_text_message(event):
             msg = ImageSendMessage(original_content_url=url, preview_image_url=url)
             memory.append(uid, 'assistant', url)
         else:
-            user_model = model_management[uid]
+            usr_mdl = model_management[uid]
             memory.append(uid, 'user', text)
             url = website.get_url_from_text(text)
             if url:
+                # 處理網址
                 msg = TextSendMessage(text='處理網址...')
             else:
-                ok, resp, err = user_model.chat_completions(memory.get(uid), os.getenv('OPENAI_MODEL_ENGINE'))
+                ok, resp, err = usr_mdl.chat_completions(memory.get(uid), os.getenv('OPENAI_MODEL_ENGINE'))
                 if not ok:
                     raise Exception(err)
                 role, content = get_role_and_content(resp)
@@ -219,7 +201,8 @@ def handle_audio_message(event):
             raise Exception(err)
         memory.append(uid, 'user', resp['text'])
         ok, resp, err = model_management[uid].chat_completions(memory.get(uid), 'gpt-3.5-turbo')
-        if not ok:\n            raise Exception(err)
+        if not ok:
+            raise Exception(err)
         role, content = get_role_and_content(resp)
         msg = TextSendMessage(text=content)
     except Exception as e:
