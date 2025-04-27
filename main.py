@@ -34,7 +34,7 @@ website = Website()
 memory = Memory(system_message=os.getenv('SYSTEM_MESSAGE'), memory_message_count=2)
 model_management = {}
 api_keys = {}
-BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')  # 記得.env加一行：LINE_BOT_USER_ID=你的bot的userId
+BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')
 
 def should_process_message(event, text):
     """ 判斷是否要處理這條訊息 """
@@ -76,6 +76,7 @@ def handle_text_message(event):
     logger.info(f'{user_id}: {text}')
 
     if not should_process_message(event, text):
+        line_bot_api.reply_message(event.reply_token, "BOT_USER_ID :" + BOT_USER_ID + "\n event:" + event)
         return
 
     try:
