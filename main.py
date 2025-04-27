@@ -77,7 +77,6 @@ def handle_text_message(event):
 
     if not should_process_message(event, text):
             logger.info(f'Message ignored: {text}')
-            line_bot_api.reply_message(event.reply_token, msg)
             return
 
     try:
