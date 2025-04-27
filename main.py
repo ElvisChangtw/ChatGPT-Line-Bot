@@ -55,11 +55,6 @@ def should_process_message(event, text):
 
 def get_replied_message_text(event):
     """如果這個訊息是reply別人的，嘗試拿到被reply的訊息文字"""
-    if hasattr(event.message, 'replyToken') and event.message.replyToken:
-        # 這裡只是檢查是否是reply，但不保證能抓到內容
-        pass  # 直接看下面方法
-
-    # 更好的做法：檢查 message.reference (新API有)
     reference = getattr(event.message, 'reference', None)
     if reference and hasattr(reference, 'messageId'):
         replied_message_id = reference.messageId
