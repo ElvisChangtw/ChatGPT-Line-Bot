@@ -65,38 +65,38 @@ def should_process_message(event, text):
     source_type = event.source.type  # user / group / room
 
     if source_type == 'user':
-        return True  # 私聊都處理
+        return True
 
     if source_type in ['group', 'room']:
         if text.startswith('/'):
-            return True  # 指令開頭就直接處理
-
+            return True
         mention = getattr(event.message, 'mention', None)
         if mention and mention.mentionees:
             for m in mention.mentionees:
                 return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
-    return False  # 其他情況不處理
+    return False
 
 def get_replied_message_text(event):
     """如果這個訊息是reply別人的，從快取找到被reply的文字"""
     reference = getattr(event.message, 'reference', None)
     if reference and hasattr(reference, 'messageId'):
         replied_message_id = reference.messageId
-        return message_cache.get(replied_message_id, None)  # 快取查找
+        replied_message_content = message_cache.get(replied_message_id, None)
+        logger.info(f'test - replied_message_content: {replied_message_content}')
+        return replied_message_content
+    logger.info(f'test - replied_message_content NULL')
     return None
 
 def remove_bot_mention(event, text):
     """從訊息中只移除@bot自己的文字，保留其他mention"""
     mention = getattr(event.message, 'mention', None)
     if mention and mention.mentionees:
-        # 要從後面往前刪，不然index會跑掉
         sorted_mentions = sorted(mention.mentionees, key=lambda x: x.index, reverse=True)
         for m in sorted_mentions:
             if m.user_id == BOT_USER_ID:
                 if hasattr(m, 'index') and hasattr(m, 'length'):
-                    # 切掉@自己那一段
                     text = text[:m.index] + text[m.index + m.length:]
-        text = text.strip()  # 刪完多餘空格
+        text = text.strip()
     return text
 
 
@@ -105,7 +105,6 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
-
     try:
         auto_cache_text_messages(body)
         handler.handle(body, signature)
