@@ -3,7 +3,8 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage, ImageSendMessage, AudioMessage
+    MessageEvent, TextMessage, TextSendMessage, ImageSendMessage, AudioMessage,
+    Mention, Mentionee
 )
 import os
 import uuid
@@ -52,7 +53,6 @@ def auto_cache_text_messages(body):
                 msg_id = msg['id']
                 txt = msg['text'].strip()
                 save_message_to_cache(msg_id, txt)
-                # 若有 quotedMessageId，記錄引用對應
                 qid = msg.get('quotedMessageId')
                 if qid:
                     quoted_cache[msg_id] = qid
@@ -84,12 +84,10 @@ def should_process_message(event, text):
 def get_replied_message_text(event):
     """如果是回覆/引用其他訊息，從快取取得原文"""
     mid = event.message.id
-    # 先檢查 quoted_cache
     if mid in quoted_cache:
         orig_id = quoted_cache[mid]
         logger.info(f"Quoted cache lookup: {orig_id}")
         return message_cache.get(orig_id)
-    # 再檢查 reference（舊版）
     ref = getattr(event.message, 'reference', None)
     if ref:
         rid = getattr(ref, 'message_id', None) or getattr(ref, 'messageId', None)
@@ -103,7 +101,6 @@ def remove_bot_mention(event, text):
     """移除訊息中的 @Bot 自己 mention，保留其他mention"""
     mention = getattr(event.message, 'mention', None)
     if mention and mention.mentionees:
-        # 反向刪除以避免 index 位移
         for m in sorted(mention.mentionees, key=lambda x: x.index, reverse=True):
             if m.user_id == BOT_USER_ID and hasattr(m, 'index') and hasattr(m, 'length'):
                 text = text[:m.index] + text[m.index + m.length:]
@@ -131,18 +128,42 @@ def handle_text_message(event):
     reply_txt = get_replied_message_text(event)
     logger.info(f"{uid}: {text}")
 
-    if not should_process_message(event, text):
-        logger.info(f"Ignored: {text}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text='尚未註冊'))
+    # 未註冊分支
+    if uid not in model_management:
+        src = event.source.type
+        if src == 'user':
+            # 私聊下純文字回覆
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text='尚未註冊，請先輸入 /註冊 sk-xxxxx')
+            )
+        else:
+            # 群組/聊天室內 @Bot 回覆
+            mention_text = f"<@{BOT_USER_ID}> 尚未註冊，請先輸入 /註冊 sk-xxxxx"
+            reply = TextSendMessage(
+                text=mention_text,
+                mention=Mention(
+                    mentionees=[
+                        Mentionee(
+                            index=0,
+                            length=len(f"<@{BOT_USER_ID}>") ,
+                            user_id=BOT_USER_ID
+                        )
+                    ]
+                )
+            )
+            line_bot_api.reply_message(event.reply_token, reply)
         return
 
-    # 移除對bot的mention
+    # 已註冊流程
     text = remove_bot_mention(event, text)
     if reply_txt:
         text = f"針對此訊息回應：{reply_txt}\n使用者補充：{text}"
+        logger.info(f"Merged reply: {text}")
 
     try:
         if text.startswith('/註冊'):
+            # 已註冊情況也可重新註冊
             key = text[3:].strip()
             mdl = OpenAIModel(api_key=key)
             ok, _, _ = mdl.check_token_valid()
@@ -173,7 +194,6 @@ def handle_text_message(event):
             memory.append(uid, 'user', text)
             url = website.get_url_from_text(text)
             if url:
-                # 處理網址
                 msg = TextSendMessage(text='處理網址...')
             else:
                 ok, resp, err = usr_mdl.chat_completions(memory.get(uid), os.getenv('OPENAI_MODEL_ENGINE'))
