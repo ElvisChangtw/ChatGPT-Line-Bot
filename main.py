@@ -21,9 +21,9 @@ from src.mongodb import mongodb
 
 # 最大快取條目數
 MAX_CACHE_SIZE = 1000
-# 有序字典作為快取
+# 有序字典作為快取訊息內容
 message_cache = OrderedDict()
-# 快取用於 mapping 引用訊息到原文
+# 快取引用關係 quotedMessageId -> 原訊息ID
 quoted_cache = {}
 
 # 載入環境變數
@@ -46,30 +46,16 @@ def auto_cache_text_messages(body):
     """自動快取所有文字訊息，並處理 quotedMessageId"""
     try:
         data = json.loads(body)
-        events = data.get('events', [])
-        for event in events:
+        for event in data.get('events', []):
             if event.get('type') == 'message' and event['message'].get('type') == 'text':
                 msg = event['message']
-                message_id = msg['id']
-                text = msg['text'].strip()
-                # 存文字到快取
-                save_message_to_cache(message_id, text)
-                # 若有 quotedMessageId，快取引用對應
-                quoted_id = msg.get('quotedMessageId')
-                if quoted_id:
-                    quoted_cache[message_id] = quoted_id
-    except Exception as e:
-        logger.error(f"Auto cache text message failed: {e}")(body):
-    """自動快取所有文字訊息"""
-    try:
-        data = json.loads(body)
-        events = data.get('events', [])
-        for event in events:
-            if event.get('type') == 'message' and event['message'].get('type') == 'text':
-                msg = event['message']
-                message_id = msg['id']
-                text = msg['text'].strip()
-                save_message_to_cache(message_id, text)
+                msg_id = msg['id']
+                txt = msg['text'].strip()
+                save_message_to_cache(msg_id, txt)
+                # 若有 quotedMessageId，記錄引用對應
+                qid = msg.get('quotedMessageId')
+                if qid:
+                    quoted_cache[msg_id] = qid
     except Exception as e:
         logger.error(f"Auto cache text message failed: {e}")
 
@@ -83,10 +69,10 @@ def save_message_to_cache(message_id, text):
 
 def should_process_message(event, text):
     """判斷是否要處理此訊息"""
-    source_type = event.source.type
-    if source_type == 'user':
+    src = event.source.type
+    if src == 'user':
         return True
-    if source_type in ['group', 'room']:
+    if src in ['group', 'room']:
         if text.startswith('/'):
             return True
         mention = getattr(event.message, 'mention', None)
@@ -96,167 +82,130 @@ def should_process_message(event, text):
 
 
 def get_replied_message_text(event):
-    """如果此訊息是 reply 或 quote，從快取取得原文"""
-    # 先檢查 quoted_cache（處理原始 JSON 中的 quotedMessageId）
-    msg_id = event.message.id
-    if msg_id in quoted_cache:
-        quoted_id = quoted_cache.get(msg_id)
-        logger.info(f"get_replied_message_text via quoted_cache -> quoted_id: {quoted_id}")
-        return message_cache.get(quoted_id)
-
-    # 若無 quotedMessageId，再檢查 reference（舊版）
-    reference = getattr(event.message, 'reference', None)
-    if reference:
-        replied_id = getattr(reference, 'message_id', None) or getattr(reference, 'messageId', None)
-        if replied_id:
-            logger.info(f"get_replied_message_text via reference -> message_id: {replied_id}")
-            return message_cache.get(replied_id)
-    logger.info("get_replied_message_text: no quoted or reference id")
-    return None(event):
-    """如果此訊息是 reply 或 quote，從快取取得原文"""
-    msg = event.message
-    # 新版 quote message 支援 quoted_message_id
-    quoted_id = getattr(msg, 'quoted_message_id', None) or getattr(msg, 'quotedMessageId', None)
-    if quoted_id:
-        logger.info(f"Found quoted_message_id: {quoted_id}")
-        return message_cache.get(quoted_id)
-    # 舊版 reference 物件
-    reference = getattr(msg, 'reference', None)
-    if reference:
-        replied_id = getattr(reference, 'message_id', None) or getattr(reference, 'messageId', None)
-        if replied_id:
-            logger.info(f"Found reference message_id: {replied_id}")
-            return message_cache.get(replied_id)
-    logger.info("get_replied_message_text: no quoted or reference id")
+    """如果是回覆/引用其他訊息，從快取取得原文"""
+    mid = event.message.id
+    # 先檢查 quoted_cache
+    if mid in quoted_cache:
+        orig_id = quoted_cache[mid]
+        logger.info(f"Quoted cache lookup: {orig_id}")
+        return message_cache.get(orig_id)
+    # 再檢查 reference（舊版）
+    ref = getattr(event.message, 'reference', None)
+    if ref:
+        rid = getattr(ref, 'message_id', None) or getattr(ref, 'messageId', None)
+        if rid:
+            logger.info(f"Reference lookup: {rid}")
+            return message_cache.get(rid)
     return None
 
 
 def remove_bot_mention(event, text):
-    """移除訊息中針對 Bot 的 @mention，只保留其他 mention"""
+    """移除訊息中的 @Bot 自己 mention，保留其他mention"""
     mention = getattr(event.message, 'mention', None)
     if mention and mention.mentionees:
-        sorted_mentions = sorted(mention.mentionees, key=lambda x: x.index, reverse=True)
-        for m in sorted_mentions:
+        # 反向刪除以避免 index 位移
+        for m in sorted(mention.mentionees, key=lambda x: x.index, reverse=True):
             if m.user_id == BOT_USER_ID and hasattr(m, 'index') and hasattr(m, 'length'):
                 text = text[:m.index] + text[m.index + m.length:]
         text = text.strip()
     return text
 
 
-@app.route("/callback", methods=['POST'])
+@app.route('/callback', methods=['POST'])
 def callback():
     signature = request.headers.get('X-Line-Signature')
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
+    app.logger.info('Request body: ' + body)
     try:
         auto_cache_text_messages(body)
         handler.handle(body, signature)
     except InvalidSignatureError:
-        print("Invalid signature. Please check your channel access token/secret.")
-        abort(400)
+        abort(400, 'Invalid signature.')
     return 'OK'
 
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    user_id = event.source.user_id
+    uid = event.source.user_id
     text = event.message.text.strip()
-    replied = get_replied_message_text(event)
-    logger.info(f"{user_id}: {text}")
+    reply_txt = get_replied_message_text(event)
+    logger.info(f"{uid}: {text}")
 
     if not should_process_message(event, text):
-        logger.info(f"Message ignored: {text}")
-        msg = TextSendMessage(text="尚未註冊")
-        line_bot_api.reply_message(event.reply_token, msg)
+        logger.info(f"Ignored: {text}")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text='尚未註冊'))
         return
 
-    # 移除對 Bot 的 mention
+    # 移除對bot的mention
     text = remove_bot_mention(event, text)
-
-    if replied:
-        text = f"針對此訊息回應：{replied}\n使用者補充：{text}"
-        logger.info(f"Merged replied text: {text}")
+    if reply_txt:
+        text = f"針對此訊息回應：{reply_txt}\n使用者補充：{text}"
 
     try:
         if text.startswith('/註冊'):
-            api_key = text[3:].strip()
-            model = OpenAIModel(api_key=api_key)
-            ok, _, _ = model.check_token_valid()
+            key = text[3:].strip()
+            mdl = OpenAIModel(api_key=key)
+            ok, _, _ = mdl.check_token_valid()
             if not ok:
                 raise ValueError('Invalid API token')
-            model_management[user_id] = model
-            storage.save({user_id: api_key})
+            model_management[uid] = mdl
+            storage.save({uid: key})
             msg = TextSendMessage(text='Token 有效，註冊成功')
-
         elif text.startswith('/指令說明'):
-            msg = TextSendMessage(text="指令：...")
-
+            msg = TextSendMessage(text='指令：...')
         elif text.startswith('/系統訊息'):
-            memory.change_system_message(user_id, text[5:].strip())
+            memory.change_system_message(uid, text[5:].strip())
             msg = TextSendMessage(text='輸入成功')
-
         elif text.startswith('/清除'):
-            memory.remove(user_id)
+            memory.remove(uid)
             msg = TextSendMessage(text='歷史訊息清除成功')
-
         elif text.startswith('/圖像'):
-            prompt = text[3:].strip()
-            memory.append(user_id, 'user', prompt)
-            ok, resp, err = model_management[user_id].image_generations(prompt)
+            prm = text[3:].strip()
+            memory.append(uid, 'user', prm)
+            ok, resp, err = model_management[uid].image_generations(prm)
             if not ok:
                 raise Exception(err)
             url = resp['data'][0]['url']
             msg = ImageSendMessage(original_content_url=url, preview_image_url=url)
-            memory.append(user_id, 'assistant', url)
-
+            memory.append(uid, 'assistant', url)
         else:
-            user_model = model_management[user_id]
-            memory.append(user_id, 'user', text)
+            usr_mdl = model_management[uid]
+            memory.append(uid, 'user', text)
             url = website.get_url_from_text(text)
             if url:
-                # 處理網址或 YouTube
-                # ...省略詳細
-                msg = TextSendMessage(text=response)
+                # 處理網址
+                msg = TextSendMessage(text='處理網址...')
             else:
-                ok, resp, err = user_model.chat_completions(memory.get(user_id), os.getenv('OPENAI_MODEL_ENGINE'))
+                ok, resp, err = usr_mdl.chat_completions(memory.get(uid), os.getenv('OPENAI_MODEL_ENGINE'))
                 if not ok:
                     raise Exception(err)
                 role, content = get_role_and_content(resp)
                 msg = TextSendMessage(text=content)
-            memory.append(user_id, role, content)
-
-    except ValueError:
-        msg = TextSendMessage(text='Token 無效，請重新註冊')
-    except KeyError:
-        msg = TextSendMessage(text='請先註冊 Token')
+            memory.append(uid, role, content)
     except Exception as e:
-        memory.remove(user_id)
         msg = TextSendMessage(text=str(e))
-
     line_bot_api.reply_message(event.reply_token, msg)
 
 
 @handler.add(MessageEvent, message=AudioMessage)
 def handle_audio_message(event):
-    user_id = event.source.user_id
+    uid = event.source.user_id
     audio = line_bot_api.get_message_content(event.message.id)
     path = f"{uuid.uuid4()}.m4a"
-    with open(path, 'wb') as fd:
+    with open(path, 'wb') as f:
         for chunk in audio.iter_content():
-            fd.write(chunk)
-
+            f.write(chunk)
     try:
-        if user_id not in model_management:
+        if uid not in model_management:
             raise ValueError('Invalid API token')
-        ok, resp, err = model_management[user_id].audio_transcriptions(path, 'whisper-1')
+        ok, resp, err = model_management[uid].audio_transcriptions(path, 'whisper-1')
         if not ok:
             raise Exception(err)
-        memory.append(user_id, 'user', resp['text'])
-        ok, resp, err = model_management[user_id].chat_completions(memory.get(user_id), 'gpt-3.5-turbo')
+        memory.append(uid, 'user', resp['text'])
+        ok, resp, err = model_management[uid].chat_completions(memory.get(uid), 'gpt-3.5-turbo')
         if not ok:
             raise Exception(err)
         role, content = get_role_and_content(resp)
-        memory.append(user_id, role, content)
         msg = TextSendMessage(text=content)
     except Exception as e:
         msg = TextSendMessage(text=str(e))
@@ -265,7 +214,7 @@ def handle_audio_message(event):
     line_bot_api.reply_message(event.reply_token, msg)
 
 
-@app.route("/", methods=['GET'])
+@app.route('/', methods=['GET'])
 def home():
     return 'Hello World'
 
