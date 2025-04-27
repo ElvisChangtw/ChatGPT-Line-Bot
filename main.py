@@ -53,6 +53,27 @@ def should_process_message(event, text):
                 return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
     return False  # 其他情況不處理
 
+def get_replied_message_text(event):
+    """如果這個訊息是reply別人的，嘗試拿到被reply的訊息文字"""
+    if hasattr(event.message, 'replyToken') and event.message.replyToken:
+        # 這裡只是檢查是否是reply，但不保證能抓到內容
+        pass  # 直接看下面方法
+
+    # 更好的做法：檢查 message.reference (新API有)
+    reference = getattr(event.message, 'reference', None)
+    if reference and hasattr(reference, 'messageId'):
+        replied_message_id = reference.messageId
+        try:
+            content = line_bot_api.get_message_content(replied_message_id)
+            if content:
+                # LINE get_message_content回來是bytes stream，需要自己解析
+                # 注意：這邊拿到的是二進位資料，通常是文字就 decode 成 utf-8
+                message_text = content.content.decode('utf-8')
+                return message_text
+        except Exception as e:
+            logger.error(f"Failed to get replied message: {str(e)}")
+    return None
+
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -72,7 +93,14 @@ def callback():
 def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
+    replied_text = get_replied_message_text(event)  # 這裡另外抓
     logger.info(f'{user_id}: {text}')
+
+
+    if replied_text:
+        text = f"針對這段話回應：{replied_text}\n使用者補充說：{text}"
+    else:
+        text = text
 
 
     if not should_process_message(event, text):
