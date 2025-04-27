@@ -36,24 +36,24 @@ model_management = {}
 api_keys = {}
 BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')
 
-def should_process_message(event, text):
-    """ 判斷是否要處理這條訊息 """
-    source_type = event.source.type  # user / group / room
+# def should_process_message(event, text):
+#     """ 判斷是否要處理這條訊息 """
+#     source_type = event.source.type  # user / group / room
 
-    if source_type == 'user':
-        return True  # 私聊都處理
+#     if source_type == 'user':
+#         return True  # 私聊都處理
 
-    if source_type in ['group', 'room']:
-        if text.startswith('/'):
-            return True  # 指令開頭就直接處理
+#     if source_type in ['group', 'room']:
+#         if text.startswith('/'):
+#             return True  # 指令開頭就直接處理
 
-        mention = getattr(event.message, 'mention', None)
-        if mention and mention.mentionees:
-            for m in mention.mentionees:
-                print("mentionees :"+ m + " is mentioned")
-                print("BOT_USER_ID = "+ BOT_USER_ID)
-            return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
-    return False  # 其他情況不處理
+#         mention = getattr(event.message, 'mention', None)
+#         if mention and mention.mentionees:
+#             for m in mention.mentionees:
+#                 print("mentionees :"+ m + " is mentioned")
+#                 print("BOT_USER_ID = "+ BOT_USER_ID)
+#             return any(m.user_id == BOT_USER_ID for m in mention.mentionees)
+#     return False  # 其他情況不處理
 
 
 @app.route("/callback", methods=['POST'])
@@ -74,10 +74,6 @@ def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
     logger.info(f'{user_id}: {text}')
-
-    if not should_process_message(event, text):
-        line_bot_api.reply_message(event.reply_token, "BOT_USER_ID :" + BOT_USER_ID + "\n event:" + event)
-        return
 
     try:
         if text.startswith('/註冊'):
@@ -146,7 +142,7 @@ def handle_text_message(event):
                 if not is_successful:
                     raise Exception(error_message)
                 role, response = get_role_and_content(response)
-                msg = TextSendMessage(text=response+BOT_USER_ID)
+                msg = TextSendMessage(text=response+BOT_USER_ID + "\n event:" + event)
             memory.append(user_id, role, response)
     except ValueError:
         msg = TextSendMessage(text='Token 無效，請重新註冊，格式為 /註冊 sk-xxxxx')
