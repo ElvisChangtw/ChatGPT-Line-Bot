@@ -116,7 +116,7 @@ def handle_text_message(event):
 
     if replied_text:
         text = f"針對這段話回應：{replied_text}\n使用者補充說：{text}"
-        logger.info("replied_text:" + text)
+        logger.info(f"replied_text:{text}")
     else:
         text = text
     
