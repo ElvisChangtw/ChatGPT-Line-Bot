@@ -3,9 +3,10 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage, ImageSendMessage, AudioMessage,
-    Mention, Mentionee
+    MessageEvent, TextMessage, TextSendMessage, ImageSendMessage, AudioMessage
 )
+from linebot.models.mention import Mention
+from linebot.models.mentionee import Mentionee
 import os
 import uuid
 import json
@@ -128,34 +129,24 @@ def handle_text_message(event):
     reply_txt = get_replied_message_text(event)
     logger.info(f"{uid}: {text}")
 
-    # 未註冊分支
     if uid not in model_management:
         src = event.source.type
         if src == 'user':
-            # 私聊下純文字回覆
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text='尚未註冊，請先輸入 /註冊 sk-xxxxx')
             )
         else:
-            # 群組/聊天室內 @Bot 回覆
             mention_text = f"<@{BOT_USER_ID}> 尚未註冊，請先輸入 /註冊 sk-xxxxx"
             reply = TextSendMessage(
                 text=mention_text,
                 mention=Mention(
-                    mentionees=[
-                        Mentionee(
-                            index=0,
-                            length=len(f"<@{BOT_USER_ID}>") ,
-                            user_id=BOT_USER_ID
-                        )
-                    ]
+                    mentionees=[Mentionee(index=0, length=len(f"<@{BOT_USER_ID}>") , user_id=BOT_USER_ID)]
                 )
             )
             line_bot_api.reply_message(event.reply_token, reply)
         return
 
-    # 已註冊流程
     text = remove_bot_mention(event, text)
     if reply_txt:
         text = f"針對此訊息回應：{reply_txt}\n使用者補充：{text}"
@@ -163,7 +154,6 @@ def handle_text_message(event):
 
     try:
         if text.startswith('/註冊'):
-            # 已註冊情況也可重新註冊
             key = text[3:].strip()
             mdl = OpenAIModel(api_key=key)
             ok, _, _ = mdl.check_token_valid()
