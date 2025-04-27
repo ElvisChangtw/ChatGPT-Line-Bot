@@ -11,7 +11,7 @@ from linebot.models import (
 )
 import os
 import uuid
-
+import json
 from src.models import OpenAIModel
 from src.memory import Memory
 from src.logger import logger
@@ -40,6 +40,19 @@ memory = Memory(system_message=os.getenv('SYSTEM_MESSAGE'), memory_message_count
 model_management = {}
 api_keys = {}
 BOT_USER_ID = os.getenv('LINE_BOT_USER_ID')
+
+def auto_cache_text_messages(body):
+    """自動快取所有文字型訊息"""
+    try:
+        data = json.loads(body)
+        events = data.get('events', [])
+        for event in events:
+            if event['type'] == 'message' and event['message']['type'] == 'text':
+                message_id = event['message']['id']
+                text = event['message']['text'].strip()
+                save_message_to_cache(message_id, text)
+    except Exception as e:
+        logger.error(f"Auto cache text message failed: {e}")
 
 def save_message_to_cache(message_id, text):
     """存訊息到快取，超過上限自動移除最舊的"""
@@ -92,20 +105,19 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
-    
+
     try:
+        auto_cache_text_messages(body)
         handler.handle(body, signature)
     except InvalidSignatureError:
         print("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
     return 'OK'
 
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     user_id = event.source.user_id
     text = event.message.text.strip()
-    save_message_to_cache(event.message.id, text)
     replied_text = get_replied_message_text(event) 
     logger.info(f'{user_id}: {text}')
 
