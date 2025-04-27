@@ -77,7 +77,6 @@ def handle_text_message(event):
 
     if not should_process_message(event, text):
             logger.info(f'Message ignored: {text}')
-            msg = TextSendMessage(text='請先註冊你的 API Token，格式為 /註冊 [API TOKEN]')
             line_bot_api.reply_message(event.reply_token, msg)
             return
 
